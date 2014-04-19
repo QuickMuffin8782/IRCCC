@@ -34,8 +34,8 @@ Currently supported commands are:
 1. https://www.youtube.com/watch?v=2ctRfWnisSk#t=343
 
 TODO:
-		- color support
-		- better handling of the IRC protocol
-		- use window API where available
+- color support
+- better handling of the IRC protocol
+- use window API where available
 
 This program is released under the MIT license.
