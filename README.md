@@ -22,13 +22,13 @@ How to use:
 You can also supply an optional nick argument to set your nickname, or you can change your nick within the client with the standard /nick command.
 Currently supported commands are:
 
-/window N			- switch to window N
-/join CHANNEL		- join CHANNEL
-/part				- part the current channel or private chat
-/quit 				- disconnect and quit
-/nick NICK			- change nickname to NICK
-/query USER 		- start a private chat with user USER
-/help 				- list available commands
+- /window N			- switch to window N
+- /join CHANNEL		- join CHANNEL
+- /part				- part the current channel or private chat
+- /quit 				- disconnect and quit
+- /nick NICK			- change nickname to NICK
+- /query USER 		- start a private chat with user USER
+- /help 				- list available commands
 
 
 1. https://www.youtube.com/watch?v=2ctRfWnisSk#t=343
