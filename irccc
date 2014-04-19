@@ -1,0 +1,873 @@
+--[[
+IRCCC v 0.9 ComputerCraft IRC Client
+Matti Vapa, 2014
+https://github.com/mattijv/IRCCC/
+http://pastebin.com/gaSL8HZC
+
+This is a ComputerCraft IRC client, or more specifically a client for the qwebirc backend server.
+Unfortunately the HTTP API in ComputerCraft doesn't allow for a true IRC client (even though the
+HTTP protocol can in theory be used to communicate with an IRC server[1]). This client provides
+a work-around by interfacing with the qwebirc backend. qwebirc is a popular webchat interface and
+is relatively straightforward to work with. In addition, several IRC servers already host a webchat
+server, so there's no need to set up your own, although that remains a possibility if you can't
+find a webchat for your favourite server to connect to.
+
+How to use:
+
+	* Download with: pastebin get ******** irc
+	* Check that the baseUrl and dynamicUrl parameters are correct. Examples are provided for espernet
+	  and quakenet. By default the client connects to espernet.
+	* Start the client with:
+		irc
+
+You can also supply an optional nick argument to set your nickname, or you can change your nick within the client with the standard /nick command.
+Currently supported commands are:
+
+/window N			- switch to window N
+/join CHANNEL		- join CHANNEL
+/part				- part the current channel or private chat
+/quit 				- disconnect and quit
+/nick NICK			- change nickname to NICK
+/query USER 		- start a private chat with user USER
+/help 				- list available commands
+
+
+1. https://www.youtube.com/watch?v=2ctRfWnisSk#t=343
+
+TODO:
+		- color support
+		- better handling of the IRC protocol
+		- use window API where available
+
+This program is released under the MIT license.
+
+]]--
+
+
+-- look at the source of the qwebirc webchat login page and take the values
+-- for baseUrl and dynamicBaseUrl for use here
+-- examples for espernet and quakenet
+
+local baseUrl = "http://webchat.esper.net/"
+local dynamicUrl = ""
+--local baseUrl = "http://webchat.quakenet.org/"
+--local dynamicUrl = "dynamic/leibniz/"
+
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+-- JSON4Lua: JSON encoding / decoding support for the Lua language.
+-- json Module.
+-- Author: Craig Mason-Jones
+-- Homepage: http://json.luaforge.net/
+-- Version: 0.9.40
+-- This module is released under the MIT License (MIT).
+ 
+-- edited for brevity
+ 
+local base = _G
+local decode_scanArray
+local decode_scanComment
+local decode_scanConstant
+local decode_scanNumber
+local decode_scanObject
+local decode_scanString
+local decode_scanWhitespace
+local encodeString
+local isArray
+local isEncodable
+ 
+local function encode (v)
+  -- Handle nil values
+  if v==nil then
+    return "null"
+  end
+ 
+  local vtype = base.type(v)  
+ 
+  -- Handle strings
+  if vtype=='string' then    
+    return '"' .. encodeString(v) .. '"'            -- Need to handle encoding in string
+  end
+ 
+  -- Handle booleans
+  if vtype=='number' or vtype=='boolean' then
+    return base.tostring(v)
+  end
+ 
+  -- Handle tables
+  if vtype=='table' then
+    local rval = {}
+    -- Consider arrays separately
+    local bArray, maxCount = isArray(v)
+    if bArray then
+      for i = 1,maxCount do
+        table.insert(rval, encode(v[i]))
+      end
+    else        -- An object, not an array
+      for i,j in base.pairs(v) do
+        if isEncodable(i) and isEncodable(j) then
+          table.insert(rval, '"' .. encodeString(i) .. '":' .. encode(j))
+        end
+      end
+    end
+    if bArray then
+      return '[' .. table.concat(rval,',') ..']'
+    else
+      return '{' .. table.concat(rval,',') .. '}'
+    end
+  end
+ 
+  -- Handle null values
+  if vtype=='function' and v==null then
+    return 'null'
+  end
+ 
+  base.assert(false,'encode attempt to encode unsupported type ' .. vtype .. ':' .. base.tostring(v))
+end
+ 
+local function decode(s, startPos)
+  startPos = startPos and startPos or 1
+  startPos = decode_scanWhitespace(s,startPos)
+  base.assert(startPos<=string.len(s), 'Unterminated JSON encoded object found at position in [' .. s .. ']')
+  local curChar = string.sub(s,startPos,startPos)
+  -- Object
+  if curChar=='{' then
+    return decode_scanObject(s,startPos)
+  end
+  -- Array
+  if curChar=='[' then
+    return decode_scanArray(s,startPos)
+  end
+  -- Number
+  if string.find("+-0123456789.e", curChar, 1, true) then
+    return decode_scanNumber(s,startPos)
+  end
+  -- String
+  if curChar==[["]] or curChar==[[']] then
+    return decode_scanString(s,startPos)
+  end
+  if string.sub(s,startPos,startPos+1)=='/*' then
+    return decode(s, decode_scanComment(s,startPos))
+  end
+  -- Otherwise, it must be a constant
+  return decode_scanConstant(s,startPos)
+end
+ 
+local function null()
+  return null -- so json.null() will also return null ;-)
+end
+ 
+ 
+function decode_scanArray(s,startPos)
+  local array = {}      -- The return value
+  local stringLen = string.len(s)
+  base.assert(string.sub(s,startPos,startPos)=='[','decode_scanArray called but array does not start at position ' .. startPos .. ' in string:\n'..s )
+  startPos = startPos + 1
+  -- Infinite loop for array elements
+  repeat
+    startPos = decode_scanWhitespace(s,startPos)
+    base.assert(startPos<=stringLen,'JSON String ended unexpectedly scanning array.')
+    local curChar = string.sub(s,startPos,startPos)
+    if (curChar==']') then
+      return array, startPos+1
+    end
+    if (curChar==',') then
+      startPos = decode_scanWhitespace(s,startPos+1)
+    end
+    base.assert(startPos<=stringLen, 'JSON String ended unexpectedly scanning array.')
+    object, startPos = decode(s,startPos)
+    table.insert(array,object)
+  until false
+end
+ 
+function decode_scanComment(s, startPos)
+  base.assert( string.sub(s,startPos,startPos+1)=='/*', "decode_scanComment called but comment does not start at position " .. startPos)
+  local endPos = string.find(s,'*/',startPos+2)
+  base.assert(endPos~=nil, "Unterminated comment in string at " .. startPos)
+  return endPos+2  
+end
+ 
+function decode_scanConstant(s, startPos)
+  local consts = { ["true"] = true, ["false"] = false, ["null"] = nil }
+  local constNames = {"true","false","null"}
+ 
+  for i,k in base.pairs(constNames) do
+    --print ("[" .. string.sub(s,startPos, startPos + string.len(k) -1) .."]", k)
+    if string.sub(s,startPos, startPos + string.len(k) -1 )==k then
+      return consts[k], startPos + string.len(k)
+    end
+  end
+  base.assert(nil, 'Failed to scan constant from string ' .. s .. ' at starting position ' .. startPos)
+end
+ 
+function decode_scanNumber(s,startPos)
+  local endPos = startPos+1
+  local stringLen = string.len(s)
+  local acceptableChars = "+-0123456789.e"
+  while (string.find(acceptableChars, string.sub(s,endPos,endPos), 1, true)
+        and endPos<=stringLen
+        ) do
+    endPos = endPos + 1
+  end
+  local stringValue = 'return ' .. string.sub(s,startPos, endPos-1)
+  local stringEval = base.loadstring(stringValue)
+  base.assert(stringEval, 'Failed to scan number [ ' .. stringValue .. '] in JSON string at position ' .. startPos .. ' : ' .. endPos)
+  return stringEval(), endPos
+end
+ 
+function decode_scanObject(s,startPos)
+  local object = {}
+  local stringLen = string.len(s)
+  local key, value
+  base.assert(string.sub(s,startPos,startPos)=='{','decode_scanObject called but object does not start at position ' .. startPos .. ' in string:\n' .. s)
+  startPos = startPos + 1
+  repeat
+    startPos = decode_scanWhitespace(s,startPos)
+    base.assert(startPos<=stringLen, 'JSON string ended unexpectedly while scanning object.')
+    local curChar = string.sub(s,startPos,startPos)
+    if (curChar=='}') then
+      return object,startPos+1
+    end
+    if (curChar==',') then
+      startPos = decode_scanWhitespace(s,startPos+1)
+    end
+    base.assert(startPos<=stringLen, 'JSON string ended unexpectedly scanning object.')
+    -- Scan the key
+    key, startPos = decode(s,startPos)
+    base.assert(startPos<=stringLen, 'JSON string ended unexpectedly searching for value of key ' .. key)
+    startPos = decode_scanWhitespace(s,startPos)
+    base.assert(startPos<=stringLen, 'JSON string ended unexpectedly searching for value of key ' .. key)
+    base.assert(string.sub(s,startPos,startPos)==':','JSON object key-value assignment mal-formed at ' .. startPos)
+    startPos = decode_scanWhitespace(s,startPos+1)
+    base.assert(startPos<=stringLen, 'JSON string ended unexpectedly searching for value of key ' .. key)
+    value, startPos = decode(s,startPos)
+    object[key]=value
+  until false   -- infinite loop while key-value pairs are found
+end
+ 
+function decode_scanString(s,startPos)
+  base.assert(startPos, 'decode_scanString(..) called without start position')
+  local startChar = string.sub(s,startPos,startPos)
+  base.assert(startChar==[[']] or startChar==[["]],'decode_scanString called for a non-string')
+  local escaped = false
+  local endPos = startPos + 1
+  local bEnded = false
+  local stringLen = string.len(s)
+  repeat
+    local curChar = string.sub(s,endPos,endPos)
+    -- Character escaping is only used to escape the string delimiters
+    if not escaped then
+      if curChar==[[\]] then
+        escaped = true
+      else
+        bEnded = curChar==startChar
+      end
+    else
+      -- If we're escaped, we accept the current character come what may
+      escaped = false
+    end
+    endPos = endPos + 1
+    base.assert(endPos <= stringLen+1, "String decoding failed: unterminated string at position " .. endPos)
+  until bEnded
+  local stringValue = 'return ' .. string.sub(s, startPos, endPos-1)
+  local stringEval = base.loadstring(stringValue)
+  base.assert(stringEval, 'Failed to load string [ ' .. stringValue .. '] in JSON4Lua.decode_scanString at position ' .. startPos .. ' : ' .. endPos)
+  return stringEval(), endPos  
+end
+ 
+function decode_scanWhitespace(s,startPos)
+  local whitespace=" \n\r\t"
+  local stringLen = string.len(s)
+  while ( string.find(whitespace, string.sub(s,startPos,startPos), 1, true)  and startPos <= stringLen) do
+    startPos = startPos + 1
+  end
+  return startPos
+end
+ 
+function encodeString(s)
+  s = string.gsub(s,'\\','\\\\')
+  s = string.gsub(s,'"','\\"')
+  s = string.gsub(s,'\n','\\n')
+  s = string.gsub(s,'\t','\\t')
+  return s
+end
+ 
+function isArray(t)
+  -- Next we count all the elements, ensuring that any non-indexed elements are not-encodable
+  -- (with the possible exception of 'n')
+  local maxIndex = 0
+  for k,v in base.pairs(t) do
+    if (base.type(k)=='number' and math.floor(k)==k and 1<=k) then      -- k,v is an indexed pair
+      if (not isEncodable(v)) then return false end     -- All array elements must be encodable
+      maxIndex = math.max(maxIndex,k)
+    else
+      if (k=='n') then
+        if v ~= table.getn(t) then return false end  -- False if n does not hold the number of elements
+      else -- Else of (k=='n')
+        if isEncodable(v) then return false end
+      end  -- End of (k~='n')
+    end -- End of k,v not an indexed pair
+  end  -- End of loop across all pairs
+  return true, maxIndex
+end
+ 
+function isEncodable(o)
+  local t = base.type(o)
+  return (t=='string' or t=='boolean' or t=='number' or t=='nil' or t=='table') or (t=='function' and o==null)
+end
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+
+-- ComputerCraft IRC client code begins here
+
+--------------------------------------------------------------------------------
+--------------------------------------------------------------------------------
+
+local defaultNick = "cc-irc-client"..tostring(math.random(1,1000))
+local nick = defaultNick
+local newNick = ""
+
+local counter = 0 -- used by the qwebirc protocol for something
+local sessionID = "" -- as is this, although a bit more self evident
+
+local currentChannel = "status"
+local quitReason = ""
+
+local BUFFERSIZE = 100 -- keep this many lines in each windows history
+local offset = 0 -- for scrolling, not implemented
+
+local w,h = term.getSize()
+local legacy = true --(window == nil) CC v < 1.6 doesn't have the window API which would be useful, but maybe later
+local windows = {}
+local winnumbers = {}
+local seen = {}
+if not legacy then
+	local origTerm = term.current()
+	windows["input"] = window.create(origTerm,1,h-1,w,2)
+	windows["status"] = window.create(origTerm,1,1,w,h-2)
+	windows["current"] = windows["status"]
+else
+	windows["status"] = {}
+	windows["current"] = windows["status"]
+end
+table.insert(winnumbers,"status")
+seen[windows["status"]] = true
+local lock = "off"
+
+local win2num = function(win)
+	for k,v in pairs(winnumbers) do
+		if v == win then return k end
+	end
+	return nil
+end
+
+--os.loadAPI("json")
+
+local post = function(url,data)
+	local cacheAvoidance = "abc"..tostring(math.random(0,10000)) -- not sure if this is needed...
+	local resp = http.post(baseUrl..dynamicUrl.."e/"..url,"r="..cacheAvoidance.."&t="..tostring(counter)..data)
+	counter = counter + 1
+	return resp
+end
+
+-- better responsiveness with asynchronous methods as we usually let the recv couroutine handle the responses
+local request = function(url,data)
+	local cacheAvoidance = "abc"..tostring(math.random(0,10000)) -- not sure if this is needed...
+	http.request(baseUrl..dynamicUrl.."e/"..url,"r="..cacheAvoidance.."&t="..tostring(counter)..data)
+	counter = counter + 1
+end
+
+-- these special URLs are used by the webchat server for different methods
+local send = function(data)
+	return request("p","&s="..sessionID.."&c="..textutils.urlEncode(data))
+end
+
+local recv = function()
+	return post("s","&s="..sessionID)
+end
+
+local connect = function()
+	return post("n","&nick="..nick)
+end
+
+-- some helper functions
+local pong = function(data)
+	return send("PONG :"..data)
+end
+
+local quit = function(_reason)
+	local reason = _reason or ""
+	return send("QUIT :"..reason)
+end
+
+-- lua default string methods suck :/
+local split = function(str,sep)
+        local sep, fields = sep or ":", {}
+        local pattern = string.format("([^%s]+)", sep)
+        str:gsub(pattern, function(c) fields[#fields+1] = c end)
+        return fields
+end
+
+local exit = function(reason)
+	local r = reason or ""
+	term.clear()
+	term.setCursorPos(1,1)
+	print(r)
+end
+
+-- for debug
+local writeLine
+writeLine = function(data,line)
+	if not (type(data) == "table") then
+		return tostring(data)
+	end
+	for i=1,#data do
+		if type(data[i]) == "table" then
+			line = writeLine(data[i],line)
+		elseif data[i] ~= nick then
+			line = line..data[i].." "
+		end
+	end
+	return line
+end
+
+-- some IRC protocol codes we handle "properly"
+local codes = {}
+codes["371"] = "RPL_INFO"
+codes["374"] = "RPL_ENDINFO"
+codes["375"] = "RPL_MOTDSTART"
+codes["372"] = "RPL_MOTD"
+codes["376"] = "RPL_ENDOFMOTD"
+codes["352"] = "RPL_WHOREPLY"
+
+-- add lines to window
+local writeToWin = function(win, s)
+	if win ~= windows["current"] then
+		seen[win] = false
+	end
+	if legacy then
+		while #s > w do
+			table.insert(win,s:sub(1,w))
+			s = s:sub(w+1)
+		end
+		table.insert(win,s)
+		while #win > BUFFERSIZE do
+			table.remove(win,1)
+		end
+	end
+end
+
+-- helper
+local errormsg = function(msg)
+	if legacy then
+		writeToWin(windows["status"],msg)
+	end
+end
+
+-- draw the current window to the screen
+local drawWin = function(win)
+	if legacy then
+		local x,y = term.getCursorPos()
+		for i = 2,h-2 do
+			term.setCursorPos(1,i)
+			term.clearLine()
+		end
+		if #win > 0 then
+			local i = math.max(1,#win-h+4)
+			iend = #win
+			local row = 2
+			while i <= iend do
+				term.setCursorPos(1,row)
+				local line = win[i]
+				--[[
+				local n = 0
+				while #line > w do
+					term.write(line:sub(1,w))
+					row = row + 1
+					n = n + 1
+					term.setCursorPos(1,row)
+					line = line:sub(w+1)
+				end
+				]]--
+				term.write(line)
+				row = row + 1
+				i = i + 1
+			end
+		end
+		term.setCursorPos(x,y)
+	end
+end
+
+-- draw the separator with list of windows and indicators of activity
+
+local drawSeparator = function()
+	if legacy then
+		local x,y = term.getCursorPos()
+		local nwin = #winnumbers
+		--local left = math.floor(0.5*(w-2*nwin+1))
+		--local right = w-left-2*nwin-1
+		term.setCursorPos(1,h-1)
+		term.write(string.rep("-",w))
+		local newcount = 0
+		for i = 1,nwin do
+			if not seen[windows[winnumbers[i]]] then
+				newcount = newcount + 1
+			end
+		end
+		local start = math.ceil(0.5*(w-(2*nwin+1+newcount)))
+		term.setCursorPos(start,h-1)
+		for i=1,nwin do
+			term.write(" ")
+			if winnumbers[i] == currentChannel then
+				term.setBackgroundColor(colors.white)
+				term.setTextColor(colors.black)
+			end
+			term.write(string.format("%d",i))
+			if not seen[windows[winnumbers[i]]] then
+				term.write("+")
+			end
+			term.setBackgroundColor(colors.black)
+			term.setTextColor(colors.white)
+		end
+		term.write(" ")
+		term.setCursorPos(x,y)
+	end
+end
+
+-- top banner with channel name
+local drawBanner = function()
+	local x,y = term.getCursorPos()
+	term.setCursorPos(1,1)
+	term.clearLine()
+	--local banner = "["..currentChannel.."]"
+	local banner = currentChannel
+	local start = math.ceil(0.5*(w-#banner))
+	term.setCursorPos(start,1)
+	term.write(banner)
+	term.setCursorPos(x,y)
+end
+
+local drawInput = function()
+	if legacy then
+		term.setCursorPos(1,h)
+		term.clearLine()
+		term.write("> ")
+	end
+end
+
+local handleResponse = function(data)
+	for i = 1, #data do
+		local id = data[i][2]
+		if id == "PING" then
+			pong(data[i][4][1])
+		elseif id == "PRIVMSG" then
+			local senderDetails = data[i][3]
+			local sender = senderDetails:sub(1,senderDetails:find("!")-1)
+			local channel = data[i][4][1]
+			if channel == nick then
+				channel = sender
+				if not windows[sender] then
+					if legacy then
+						windows[channel] = {}
+					end
+					table.insert(winnumbers,channel)
+					seen[windows[channel]] = false
+				end
+			end
+			local msg = data[i][4][2]
+			if legacy then
+				writeToWin(windows[channel],"<"..sender.."> "..msg)
+			end
+			--print("<"..sender.."> "..msg)
+		elseif id == "NICK" then
+			if newNick ~= "" then
+				local name = data[i][3]:sub(1,data[i][3]:find("!")-1)
+				if name == nick then
+					nick = newNick
+					newNick = ""
+				end
+			end
+		elseif id == "433" then
+			writeToWin(windows["status"],"Nickname already in use!")
+			newNick = ""
+		elseif codes[id] then
+			if legacy then
+				writeToWin(windows["status"],writeLine(data[i][4],""))
+				--print(data[i][4][2])
+			end
+			--print(data[i][4][2])
+		else
+			errormsg(writeLine(data[i],""))
+		end
+	end
+end
+
+commands = {}
+commands["join"] = function(input)
+	local channel = input[2]
+	if channel:sub(1,1) ~= "#" then
+		errormsg("Invalid channel name!")
+		return true
+	end
+	currentChannel = channel
+	if legacy then
+		windows[channel] = {}
+	end
+	windows["current"] = windows[currentChannel]
+	table.insert(winnumbers,channel)
+	seen[windows[channel]] = true
+	send("JOIN "..channel)
+	return true
+end
+
+commands["who"] = function(input)
+	local channel = input[2]
+	send("WHO "..channel)
+	return true
+end
+
+commands["whois"] = function(input)
+	local user = input[2]
+	send("WHOIS "..user)
+	return true
+end
+
+commands["part"] = function(input)
+	local channel = currentChannel
+	if channel == "status" then
+		errormsg("Can't part status window!")
+	else
+		local nwin
+		for i,v in pairs(winnumbers) do
+			if v == channel then
+				nwin = i
+				break
+			end
+		end
+		table.remove(winnumbers,nwin)
+		seen[windows[channel]] = nil
+		windows[channel] = nil
+		currentChannel = winnumbers[#winnumbers]
+		print(currentChannel)
+		windows["current"] = windows[currentChannel]
+		seen[windows["current"]] = true
+		if channel:sub(1,1) == "#" then
+			send("PART "..channel)
+		end
+	end
+	return true
+end
+
+commands["quit"] = function(input)
+	quit(input[2])
+	return false
+end
+
+commands["window"] = function(input)
+	local nwin = tonumber(input[2])
+	if not nwin then
+		errormsg("Invalid window number!")
+	elseif nwin > #winnumbers or nwin < 1 then
+		errormsg("Invalid window number!")
+	else
+		windows["current"] = windows[winnumbers[nwin]]
+		seen[windows["current"]] = true
+		currentChannel = winnumbers[nwin]
+	end
+	return true
+end
+
+commands["nick"] = function(input)
+	local nickname = input[2]
+	if nickname then
+		send("NICK "..nickname)
+		newNick = nickname
+		writeToWin(windows["status"],"Changed nick to: "..newNick)
+	else
+		errormsg("No nickname given.")
+	end
+	return true
+end
+
+commands["query"] = function(input)
+	local user = input[2]
+	if user then
+		currentChannel = user
+		if legacy then
+			windows[user] = {}
+		end
+		windows["current"] = windows[currentChannel]
+		table.insert(winnumbers,user)
+		seen[windows[user]] = true
+		--send("JOIN "..channel)
+	else
+		errormsg("No username given.")
+	end
+	return true
+end
+
+commands["help"] = function(input)
+	writeToWin(windows["status"],"Available commands:")
+	for k,v in pairs(commands) do
+		writeToWin(windows["status"],"- "..k)
+	end
+	return true
+end
+
+local alias = {}
+alias["w"] = "window"
+alias["j"] = "join"
+alias["p"] = "part"
+alias["q"] = "quit"
+alias["exit"] = "quit"
+alias["e"] = "quit"
+alias["n"] = "nick"
+alias["qr"] = "query"
+alias["h"] = "help"
+
+
+local changeWindow = function(nwin)
+	windows["current"] = windows[winnumbers[nwin]]
+	seen[windows["current"]] = true
+	currentChannel = winnumbers[nwin]
+	return true
+end
+
+local handeInput = function(input)
+	if not input then return true end
+	if input:sub(1,1) == "/" then
+		input = split(input," ")
+		local cmd = input[1]:sub(2)
+		if commands[cmd] then
+			return commands[cmd](input)
+		elseif alias[cmd] then
+			return commands[alias[cmd]](input)
+		else
+			errormsg("Invalid command!")
+		end
+	elseif currentChannel ~= "status" then
+			send("PRIVMSG "..currentChannel.." :"..input)
+			writeToWin(windows["current"],"<"..nick.."> "..input)
+	else
+		writeToWin(windows["status"],input)
+	end
+	return true
+end
+
+local keys = {}
+
+-- arrow keys cause problems with read() :/
+
+--[[
+keys[203] = function() -- LEFT
+	local n = win2num(currentChannel)
+	if n > 1 then
+		changeWindow(n-1)
+	end
+	return true
+end
+
+keys[205] = function() -- RIGHT
+	local n = win2num(currentChannel)
+	if n < #winnumbers then
+		changeWindow(n+1)
+	end
+	return true
+end
+]]--
+
+-- TAB to cycle through windows
+keys[15] = function()
+	local n = win2num(currentChannel)
+	if n < #winnumbers then
+		changeWindow(n+1)
+	else
+		changeWindow(1)
+	end
+	return true
+end
+
+local receive = function()
+	resp = recv()
+	while resp do
+		_data = resp.readAll()
+		if #_data > 0 then
+			data = decode(_data)
+			handleResponse(data)
+			while lock == "on" do
+				sleep(0.1)
+			end
+			lock = "on"
+			drawBanner()
+			drawWin(windows["current"])
+			drawSeparator()
+			--drawInput()
+			lock = "off"
+		end
+		resp = recv()
+	end
+	quitReason = "Disconnected!"
+end
+
+local interface = function()
+	input = read()
+	while handeInput(input) do
+		while lock == "on" do
+			sleep(0.1)
+		end
+		lock = "on"
+		drawBanner()
+		drawWin(windows["current"])
+		drawSeparator()
+		drawInput()
+		lock = "off"
+		input = read()
+	end
+	quitReason = "Bye!"
+end
+
+local specialKeys = function()
+	while true do
+		local ev, key = os.pullEvent("key")
+		if keys[key] then
+			if not keys[key]() then break end
+			while lock == "on" do
+				sleep(0.1)
+			end
+			lock = "on"
+			drawBanner()
+			drawWin(windows["current"])
+			drawSeparator()
+			--drawInput()
+			lock = "off"
+		end
+	end
+	quitReason = "Bye!"
+end
+
+local args = {...}
+if #args > 0 then
+	if args[1] == "help" then
+		print("Usage: irc [nick]")
+		print("Edit the file to change servers.")
+		return
+	else
+		nick = args[1]
+	end
+end
+drawBanner()
+drawWin(windows["current"])
+drawSeparator()
+drawInput()
+errormsg("Connecting...")
+resp = connect()
+if not resp then exit("Unable to connect!") return end
+_data = resp.readAll()
+data = decode(_data)
+sessionID = data[2]
+errormsg("Got sessionID: "..sessionID)
+--sleep(1)
+parallel.waitForAny(receive,interface,specialKeys)
+exit(quitReason)
